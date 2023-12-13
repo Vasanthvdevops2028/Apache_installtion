@@ -1,0 +1,207 @@
+
+---
+- hosts: 127.0.0.1
+  vars_prompt:
+    - name: ipaddress
+      prompt: Enter the target IP Address
+      private: no
+    - name: portno
+      prompt: Enter the SSH Port
+      private: no
+    - name: username
+      prompt: Enter the SSH Username
+      private: no
+    - name: sshpassword
+      prompt: Enter the SSH Password
+      private: yes
+    - name: sshroot
+      prompt: Enter the root password
+      private: yes
+    - name: soft_path
+      prompt: Enter the Installation mountpoint location
+      private: no
+
+  tasks:
+
+  - name: Welcome
+    file:
+      state: absent
+      path: /etc/ansible/hosts
+
+  - name: adding host entry
+    copy:
+      dest: /etc/ansible/hosts
+      content: |
+        [server]
+        {{ipaddress}}
+
+        [server:vars]
+        ansible_user={{username}}
+        ansible_port={{portno}}
+        ansible_ssh_pass={{sshpassword}}
+        ansible_su_pass={{sshroot}}
+
+  - name: refresh
+    ansible.builtin.meta: refresh_inventory
+
+  - set_fact:
+      soft_path: "{{ soft_path }}"
+
+- name: Apache Installation Started
+  hosts: server
+  become: yes
+  become_method: su
+  become_user: root
+
+  vars:
+        app_path: "{{hostvars['127.0.0.1'].soft_path}}"
+        s_path: source_11072022
+        openssl_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/openssl'
+        apr_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/apr'
+        aprutil_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/aprutil'
+        apache_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/apache'
+        tomconnect_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/tomconnect'
+        modsec_d_path: '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/modsec'
+
+        openssl_i_path: '{{app_path}}/HTTPD/{{s_path}}/openssl'
+        apr_i_path: '{{app_path}}/HTTPD/{{s_path}}/apr'
+        aprutil_i_path: '{{app_path}}/HTTPD/{{s_path}}/aprutil'
+        apache_i_path: '{{app_path}}/HTTPD/{{s_path}}/apache'
+        tomconnect_i_path: '{{app_path}}/HTTPD/{{s_path}}/tomconnect'
+        modsec_i_path: '{{app_path}}/HTTPD/{{s_path}}/modsec'
+
+        conf_path: '{{app_path}}/HTTPD/custom_conf'
+
+
+        apr_url: https://dlcdn.apache.org//apr/apr-1.7.0.tar.gz
+        aprutil_url: https://dlcdn.apache.org//apr/apr-util-1.6.1.tar.gz
+        openssl_url: https://www.openssl.org/source/openssl-3.0.5.tar.gz
+        apache_url: https://archive.apache.org/dist/httpd/httpd-2.4.54.tar.gz
+        tomconnect_url: https://downloads.apache.org/tomcat/tomcat-connectors/jk/tomcat-connectors-1.2.48-src.tar.gz
+        modsec_url: https://fossies.org/linux/www/modsecurity-2.9.5.tar.gz
+
+
+  tasks:
+
+  - name: Creating required directories
+    file:
+            path: "{{item}}"
+            state: directory
+    loop:
+            - '{{app_path}}/HTTPD/{{s_path}}/openssl'
+            - '{{app_path}}/HTTPD/{{s_path}}/apr'
+            - '{{app_path}}/HTTPD/{{s_path}}/aprutil'
+            - '{{app_path}}/HTTPD/{{s_path}}/apache'
+            - '{{app_path}}/HTTPD/{{s_path}}/tomconnect'
+            - '{{app_path}}/HTTPD/{{s_path}}/modsec'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/openssl'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/apr'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/aprutil'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/apache'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/tomconnect'
+            - '{{app_path}}/HTTPD/STAGE/{{ ansible_date_time.date }}/package/modsec'
+            - '{{app_path}}/HTTPD/custom_conf'
+
+#  - name: Installing the required RPMS
+#    yum:
+#            update_cache: yes
+#            state: latest
+#            name:
+#                 - gcc*
+#                 - zlib-devel*
+#                 - pcre*
+#                 - libxml2*
+#                 - expat*
+#                 - perl*
+
+
+
+  - name: LD_LIBRARY_PATH added to apachectl file
+    lineinfile:
+            path: "{{apache_i_path}}/bin/apachectl"
+            line: 'export LD_LIBRARY_PATH={{openssl_i_path}}/lib/'
+            insertafter: '#!/bin/sh'
+
+  - name: Including httpd Custom configuration and httpd-ssl path
+    lineinfile:
+          path: '{{apache_i_path}}/conf/httpd.conf'
+          line: "{{ item }}"
+    with_items:
+          - 'Include conf/extra/httpd-ssl.conf'
+          - 'Include {{conf_path}}/proxypass-apache.conf'
+
+  - name: Commenting unwanted lines
+    lineinfile:
+          path: '{{apache_i_path}}/conf/extra/httpd-ssl.conf'
+          regexp: "{{ item }}"
+          line: '#\1'
+          backrefs: yes
+          state: present
+    with_items:
+          - '(^SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES)'
+          - '(^SSLProxyCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES)'
+          - '(^SSLProtocol all -SSLv3)'
+          - '(^SSLProxyProtocol all -SSLv3)'
+          - '(^SSLCertificateFile "{{apache_i_path}}/conf/server.crt")'
+          - '(^SSLCertificateKeyFile "{{apache_i_path}}/conf/server.key")'
+
+  - name: Including httpd-ssl Custom configuration
+    lineinfile:
+          path: '{{apache_i_path}}/conf/extra/httpd-ssl.conf'
+          line: 'Include {{conf_path}}/apache-ssl.conf'
+          insertbefore: '</VirtualHost>'
+
+  - name: Including Websocket configuration
+    lineinfile:
+          path: '{{apache_i_path}}/conf/extra/httpd-ssl.conf'
+          line: 'Include {{conf_path}}/websocket.conf'
+          insertafter: '</VirtualHost>'
+
+  - name: Copying maintenance file
+    copy:
+        src: "{{ item }}"
+        dest: "{{apache_i_path}}/htdocs"
+    with_items:
+        - maintenance.html
+
+  - name: Copying extra configuration files
+    copy:
+        src: "{{ item }}"
+        dest: "{{conf_path}}"
+    with_items:
+        - proxypass-apache.conf
+        - apache-ssl.conf
+        - websocket.conf
+
+  - name: Copying passphrase file
+    copy:
+        src: "{{ item }}"
+        dest: "{{apache_i_path}}/bin"
+        mode: 0700
+    with_items:
+        - pass
+
+  - name: Copying extra configuration files
+    copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system"
+    with_items:
+        - httpd.service
+
+  - name: Changing systemd service location
+    lineinfile:
+          path: '/etc/systemd/system/httpd.service'
+          regexp: '(^Environment)'
+          line: 'Environment="APATH={{apache_i_path}}"'
+          backrefs: yes
+          state: present
+
+
+
+- hosts: 127.0.0.1
+  tasks:
+  - name: Apache Installed Successfully..!
+    file:
+      state: absent
+      path: /etc/ansible/hosts
+
